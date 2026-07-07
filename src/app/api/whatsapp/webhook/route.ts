@@ -1,98 +1,79 @@
-import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 
-// Initialize Supabase client using Service Role to bypass RLS for webhook updates
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-const supabase = createClient(supabaseUrl, serviceRoleKey)
+// Initialize using Service Role to bypass RLS policies for server-side webhook writes
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+const supabase = createClient(supabaseUrl, supabaseKey)
 
-/**
- * 1. GET Handler - Webhook Validation for Meta Developer Portal
- */
-export async function GET(request: NextRequest) {
+// 1. VERIFICATION ENDPOINT (Meta takes this to verify your webhook)
+export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const mode = searchParams.get('hub.mode')
   const token = searchParams.get('hub.verify_token')
   const challenge = searchParams.get('hub.challenge')
 
-  // Set the verify token to 'Qamar123' as requested
-  const MY_VERIFY_TOKEN = 'Qamar123'
+  // Set the verify token to 'Qamar123' (fallback to env)
+  const MY_VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'Qamar123'
 
   if (mode === 'subscribe' && token === MY_VERIFY_TOKEN) {
-    console.log('[WhatsApp Webhook] Verification successful with token Qamar123.')
+    console.log('[WhatsApp Webhook] URL verified successfully with token.')
     return new Response(challenge, { status: 200 })
   }
-
-  console.warn('[WhatsApp Webhook] Verification failed. Token mismatch.')
   return new Response('Verification failed', { status: 403 })
 }
 
-/**
- * 2. POST Handler - Parse incoming messages and update status
- */
-export async function POST(request: NextRequest) {
+// 2. INCOMING MESSAGE HANDLER (When user replies #[Code] DONE)
+export async function POST(request: Request) {
   try {
     const body = await request.json()
-    console.log('[WhatsApp Webhook] Received webhook payload:', JSON.stringify(body, null, 2))
+    
+    // Log the payload so Vercel logs display it
+    console.log("Inbound Webhook Received Body:", JSON.stringify(body))
 
-    // Check if the payload contains WhatsApp message details
     if (body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
       const message = body.entry[0].changes[0].value.messages[0]
-      const fromNumber = message.from // Sender's phone number (e.g. 923445552403)
-      const textBody = message.text?.body?.trim().toUpperCase() || '' // e.g. "#1009 DONE"
+      const fromNumber = message.from // User's WhatsApp number
+      const textBody = message.text?.body?.trim().toUpperCase() || ""
 
-      console.log(`[WhatsApp Webhook] Message: "${textBody}" from phone: ${fromNumber}`)
-
-      // Regex matching: checks format "#[TaskCode] DONE"
-      const match = textBody.match(/^#(\d+)\s+DONE$/)
+      // Matches # followed by numbers, then space, then DONE anywhere in text
+      const match = textBody.match(/#(\d+)\s+DONE/i)
 
       if (match) {
-        const taskCode = '#' + match[1] // Reconstruct code for query, e.g. "#1009"
-        console.log(`[WhatsApp Webhook] Matched Task Code: ${taskCode}. Verifying representative...`)
+        const taskCode = match[1]
+        const fullTaskId = '#' + taskCode
+        console.log(`Processing Task Code: ${fullTaskId} from sender: ${fromNumber}`)
 
-        // Invoke database helper function to check phone ownership and update status
-        const { data: success, error: rpcError } = await supabase.rpc(
-          'complete_task_via_whatsapp',
-          {
-            p_task_id: taskCode,
-            p_sender_phone: fromNumber
+        // Supabase Status Update (Uses service role client to bypass RLS)
+        const { error } = await supabase
+          .from('tasks')
+          .update({ status: 'Done' })
+          .eq('id', fullTaskId)
+
+        if (error) {
+          console.error("Supabase Error:", error)
+        } else {
+          console.log(`Task ${fullTaskId} successfully marked as DONE!`)
+          
+          // Send confirmation back to sender
+          try {
+            const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
+            const confirmationMsg = `*LUMORA COMMAND:*\n\nTask *${fullTaskId}* has been marked as *DONE*. Great work!`
+            await sendWhatsAppMessage(fromNumber, confirmationMsg)
+          } catch (err) {
+            console.error("[Webhook Outgoing] Confirmation send failed:", err)
           }
-        )
-
-        if (rpcError) {
-          console.error('[WhatsApp Webhook] Database RPC Error:', rpcError)
-          return Response.json({ status: 'error', message: rpcError.message }, { status: 500 })
         }
-
-        if (!success) {
-          console.warn(`[WhatsApp Webhook] Authorization failed. Phone ${fromNumber} is not assigned to task ${taskCode}.`)
-          return Response.json({ 
-            status: 'unauthorized', 
-            message: 'Phone number does not match task assignee or task not found.' 
-          }, { status: 400 })
-        }
-
-        console.log(`[WhatsApp Webhook] Task ${taskCode} successfully marked as DONE!`)
-
-        // Dispatch confirmation WhatsApp notification
-        try {
-          const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
-          const confirmationMsg = `*LUMORA COMMAND:*\n\nTask *${taskCode}* has been successfully marked as *DONE*. Great work!`
-          await sendWhatsAppMessage(fromNumber, confirmationMsg)
-        } catch (err) {
-          console.error('[WhatsApp Webhook Outgoing] Confirmation send error:', err)
-        }
-
-        return Response.json({ status: 'success', updatedTask: taskCode })
-      } else {
-        console.log('[WhatsApp Webhook] Ignored. Message text format is not "#[Code] DONE"')
       }
     }
 
-    return Response.json({ status: 'ignored' })
+    // Always return 200 response to acknowledge Meta webhook
+    return new Response(JSON.stringify({ status: 'success' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
 
   } catch (err: any) {
-    console.error('[WhatsApp Webhook] Error:', err)
-    return Response.json({ status: 'error', error: err.message }, { status: 500 })
+    console.error("Webhook Global Error:", err)
+    return new Response(JSON.stringify({ error: err.message }), { status: 200 }) 
   }
 }

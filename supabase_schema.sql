@@ -25,7 +25,11 @@ create table if not exists public.tasks (
   assigned_to uuid references public.profiles(id) on delete set null,
   deadline timestamp with time zone,
   status text not null check (status in ('Pending', 'In Progress', 'Done')) default 'Pending',
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  scheduled_date date,
+  completed_at timestamp with time zone,
+  rollover_count integer default 0,
+  original_date date
 );
 
 -- 4. Helper Function to check if the current user is an Admin
@@ -101,6 +105,11 @@ create policy "Allow members to update tasks assigned to them"
   using (assigned_to = auth.uid() or public.is_admin())
   with check (assigned_to = auth.uid() or public.is_admin());
 
+create policy "Allow admins to perform all actions on tasks"
+  on public.tasks for all
+  to authenticated
+  using (public.is_admin());
+
 -- 9. Complete Task via WhatsApp RPC Function
 -- This allows updating a task status via WhatsApp webhook without exposing service role keys.
 create or replace function public.complete_task_via_whatsapp(
@@ -138,9 +147,33 @@ begin
 
   -- Update task status to Done
   update public.tasks
-  set status = 'Done'
+  set status = 'Done', completed_at = now()
   where id = p_task_id;
 
   return true;
 end;
 $$ language plpgsql security definer;
+
+-- 10. Performance Logs Table for daily attendance & completion reporting
+create table if not exists public.performance_logs (
+  id uuid default gen_random_uuid() primary key,
+  date date not null default current_date,
+  profile_id uuid references public.profiles(id) on delete cascade not null,
+  assigned_count integer default 0,
+  completed_count integer default 0,
+  is_leave boolean default false,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique (date, profile_id)
+);
+
+alter table public.performance_logs enable row level security;
+
+create policy "Allow authenticated users to read performance logs"
+  on public.performance_logs for select
+  to authenticated
+  using (true);
+
+create policy "Allow admins to perform all actions on performance logs"
+  on public.performance_logs for all
+  to authenticated
+  using (public.is_admin());

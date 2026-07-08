@@ -43,24 +43,44 @@ export async function POST(request: Request) {
         const fullTaskId = '#' + taskCode
         console.log(`Processing Task Code: ${fullTaskId} from sender: ${fromNumber}`)
 
-        // Supabase Status Update (Uses service role client to bypass RLS)
+        // 1. Fetch task details to identify title and assignee profile
+        const { data: taskDetails } = await supabase
+          .from('tasks')
+          .select('title, profiles:assigned_to (name, phone)')
+          .eq('id', fullTaskId)
+          .single()
+
+        // 2. Supabase Status Update (Uses service role client to bypass RLS)
         const { error } = await supabase
           .from('tasks')
-          .update({ status: 'Done' })
+          .update({ status: 'Done', completed_at: new Date().toISOString() })
           .eq('id', fullTaskId)
 
         if (error) {
           console.error("Supabase Error:", error)
         } else {
           console.log(`Task ${fullTaskId} successfully marked as DONE!`)
+          const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
           
-          // Send confirmation back to sender
+          // 3. Send confirmation back to sender
           try {
-            const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
             const confirmationMsg = `*LUMORA COMMAND:*\n\nTask *${fullTaskId}* has been marked as *DONE*. Great work!`
             await sendWhatsAppMessage(fromNumber, confirmationMsg)
           } catch (err) {
             console.error("[Webhook Outgoing] Confirmation send failed:", err)
+          }
+
+          // 4. Send monitoring completion notification to Admin
+          const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
+          if (adminPhone) {
+            try {
+              const assigneeName = (taskDetails?.profiles as any)?.name || 'Team Member'
+              const assigneePhone = (taskDetails?.profiles as any)?.phone || fromNumber
+              const adminAlert = `*LUMORA MONITORING ALERT:*\n\nEmployee *${assigneeName}* (${assigneePhone}) has completed task *${fullTaskId}* ("${taskDetails?.title || ''}") via WhatsApp reply.`
+              await sendWhatsAppMessage(adminPhone, adminAlert)
+            } catch (err) {
+              console.error("[Webhook Outgoing] Admin alert send failed:", err)
+            }
           }
         }
       }

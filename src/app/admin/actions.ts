@@ -133,8 +133,9 @@ export async function createTeamMember(formData: FormData) {
   const name = formData.get('name') as string
   const phone = formData.get('phone') as string
   const role = formData.get('role') as string
+  const designation = formData.get('designation') as string
 
-  if (!email || !password || !name || !phone || !role) {
+  if (!email || !password || !name || !phone || !role || !designation) {
     return { error: 'All fields are required to register a team member' }
   }
 
@@ -158,6 +159,7 @@ export async function createTeamMember(formData: FormData) {
       name,
       phone,
       role,
+      designation
     },
   })
 

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import { signOut } from '../auth-actions'
 import { createTask, deleteTask, createTeamMember } from './actions'
+import { updateTaskStatus } from '../dashboard/actions'
 import { createClient } from '@/utils/supabase/client'
 
 interface Profile {
@@ -165,6 +166,21 @@ export default function AdminDashboardClient({
       }
     } catch (err: any) {
       alert(err.message || 'An error occurred while deleting the task')
+    }
+  }
+
+  const handleMarkAsDone = async (taskId: string) => {
+    if (!confirm(`Are you sure you want to mark Task ${taskId} as Done manually?`)) return
+
+    try {
+      const res = await updateTaskStatus(taskId, 'Done')
+      if (res.error) {
+        alert(res.error)
+      } else {
+        await fetchLatestTasks()
+      }
+    } catch (err: any) {
+      alert(err.message || 'An error occurred while updating the task status')
     }
   }
 
@@ -641,7 +657,17 @@ export default function AdminDashboardClient({
                   </div>
 
                   {/* Right Actions */}
-                  <div className="flex md:flex-col items-end justify-between md:justify-center border-t border-white/5 md:border-none pt-3 md:pt-0">
+                  <div className="flex items-center gap-2 border-t border-white/5 md:border-none pt-3 md:pt-0">
+                    {task.status !== 'Done' && (
+                      <button
+                        onClick={() => handleMarkAsDone(task.id)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-950 border border-white/5 hover:border-emerald-500/30 hover:bg-emerald-950/20 text-zinc-500 hover:text-emerald-400 transition-all duration-300 text-xs font-mono"
+                        title="Mark Task as Done"
+                      >
+                        <CheckCircle className="w-3.5 h-3.5" />
+                        <span>Done</span>
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteTask(task.id)}
                       className="p-2 rounded-lg bg-zinc-950 border border-white/5 hover:border-red-500/30 hover:bg-red-950/20 text-zinc-500 hover:text-red-400 transition-all duration-300"

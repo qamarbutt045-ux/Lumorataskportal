@@ -29,6 +29,8 @@ interface Task {
   status: 'Pending' | 'In Progress' | 'Done'
   created_at: string
   profiles?: Profile | null
+  next_task_id?: string | null
+  is_active?: boolean
 }
 
 interface PerformanceLog {
@@ -510,6 +512,27 @@ export default function AdminDashboardClient({
                   </div>
                 </div>
 
+                {/* Successor Task Dropdown */}
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-medium text-zinc-400 tracking-widest uppercase font-mono">
+                    Downstream Successor Task (Pipeline Link)
+                  </label>
+                  <div className="relative">
+                    <select
+                      name="next_task_id"
+                      defaultValue=""
+                      className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
+                    >
+                      <option value="">None (Standalone Task)</option>
+                      {tasks.map(t => (
+                        <option key={t.id} value={t.id}>
+                          {t.id} - {t.title} ({t.profiles?.name || 'Unassigned'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 {taskError && (
                   <div className="p-3 rounded-lg bg-red-950/40 border border-red-500/20 text-red-400 text-xs flex items-center gap-2">
                     <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
@@ -888,6 +911,16 @@ export default function AdminDashboardClient({
                             <Calendar className="w-3.5 h-3.5 text-zinc-650" />
                             Deadline: <span className="text-zinc-350">{formatDate(task.deadline)}</span>
                           </span>
+                          {task.next_task_id && (
+                            <span className="text-purple-400 font-semibold flex items-center gap-1">
+                              🔗 Successor: {task.next_task_id}
+                            </span>
+                          )}
+                          {!task.is_active && (
+                            <span className="text-amber-450 font-semibold flex items-center gap-1">
+                              🔒 Locked (Waiting for Predecessor)
+                            </span>
+                          )}
                         </div>
                       </div>
 

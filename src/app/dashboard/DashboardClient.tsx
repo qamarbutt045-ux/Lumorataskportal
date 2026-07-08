@@ -27,6 +27,8 @@ interface Task {
   status: 'Pending' | 'In Progress' | 'Done'
   created_at: string
   profiles?: Profile | null
+  is_active?: boolean
+  next_task_id?: string | null
 }
 
 interface DashboardClientProps {
@@ -58,6 +60,8 @@ export default function DashboardClient({
           deadline,
           status,
           created_at,
+          is_active,
+          next_task_id,
           profiles:assigned_to (
             id,
             name,
@@ -337,7 +341,12 @@ export default function DashboardClient({
                       </span>
                       
                       <div className="flex items-center gap-2">
-                        {isUpdating === task.id ? (
+                        {!task.is_active ? (
+                          <div className="flex items-center gap-1.5 text-xs text-amber-500 font-mono">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            <span>🔒 Locked (Awaiting Predecessor)</span>
+                          </div>
+                        ) : isUpdating === task.id ? (
                           <div className="flex items-center gap-1.5 text-xs text-zinc-500 font-mono">
                             <RefreshCw className="w-3 h-3 animate-spin" />
                             <span>Updating...</span>

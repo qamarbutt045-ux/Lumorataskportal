@@ -9,6 +9,7 @@ export async function createTask(formData: FormData) {
   const description = formData.get('description') as string
   const assigned_to = formData.get('assigned_to') as string
   const deadlineStr = formData.get('deadline') as string
+  const next_task_id = formData.get('next_task_id') as string || null
 
   if (!title || !assigned_to || !deadlineStr) {
     return { error: 'Title, Assignee, and Deadline are required fields' }
@@ -50,12 +51,24 @@ export async function createTask(formData: FormData) {
       assigned_to: assigned_to === 'unassigned' ? null : assigned_to,
       deadline,
       status: 'Pending',
+      next_task_id: next_task_id || null,
+      is_active: true
     })
     .select()
 
   if (error) {
     return { error: error.message }
   }
+
+  // If a successor task is linked, update it to lock it (is_active = false)
+  if (next_task_id && data && data[0]) {
+    await adminClient
+      .from('tasks')
+      .update({ is_active: false })
+      .eq('id', next_task_id)
+  }
+
+
 
   // 4. Outgoing WhatsApp notification
   if (assigned_to !== 'unassigned') {

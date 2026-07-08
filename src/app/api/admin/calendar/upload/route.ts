@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     let skippedCount = 0
 
     for (const row of rows) {
-      // Expected columns: Date, Assignee, Title, Description
+      // Expected columns: Date, Assignee, Title, Description, Next Assignee
       const dateVal = row.Date || row.date
       const assigneeVal = row.Assignee || row.assignee
       const titleVal = row.Title || row.title
@@ -111,7 +111,8 @@ export async function POST(request: NextRequest) {
         scheduled_date: scheduledDate,
         deadline: deadlineStr,
         original_date: scheduledDate,
-        status: 'Pending'
+        status: 'Pending',
+        is_active: true // Will be locked later if predecessor is set
       })
     }
 
@@ -119,12 +120,55 @@ export async function POST(request: NextRequest) {
       return Response.json({ success: false, error: 'No valid tasks found in the uploaded file' }, { status: 400 })
     }
 
-    // Insert tasks in batch
-    const { error: insertError } = await adminClient
+    // Insert tasks in batch and select returned rows to construct sequence IDs
+    const { data: insertedTasks, error: insertError } = await adminClient
       .from('tasks')
       .insert(tasksToInsert)
+      .select()
 
     if (insertError) throw insertError
+
+    // 6. Build and link successor pipeline dependencies (Next Assignee match)
+    if (insertedTasks && insertedTasks.length > 0) {
+      const updates = []
+      
+      for (let i = 0; i < insertedTasks.length; i++) {
+        const row = rows[i]
+        const nextAssigneeVal = row['Next Assignee'] || row['next_assignee']
+        
+        if (nextAssigneeVal) {
+          const cleanNextName = nextAssigneeVal.toString().toLowerCase().trim()
+          const nextAssigneeUuid = profileMap[cleanNextName]
+          
+          if (nextAssigneeUuid) {
+            // Find a task in the inserted batch belonging to the successor on the same date
+            const successorTask = insertedTasks.find((t, idx) => 
+              t.assigned_to === nextAssigneeUuid && 
+              t.scheduled_date === insertedTasks[i].scheduled_date &&
+              idx !== i
+            )
+
+            if (successorTask) {
+              // Update Task A next_task_id to B, and set Task B as locked (is_active = false)
+              updates.push(
+                adminClient
+                  .from('tasks')
+                  .update({ next_task_id: successorTask.id })
+                  .eq('id', insertedTasks[i].id),
+                adminClient
+                  .from('tasks')
+                  .update({ is_active: false })
+                  .eq('id', successorTask.id)
+              )
+            }
+          }
+        }
+      }
+
+      if (updates.length > 0) {
+        await Promise.all(updates)
+      }
+    }
 
     return Response.json({
       success: true,

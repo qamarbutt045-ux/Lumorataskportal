@@ -512,14 +512,14 @@ export default function AdminDashboardClient({
                       defaultValue=""
                       className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
                     >
-                      <option value="" disabled>Select Team Member...</option>
+                      <option value="" disabled className="bg-zinc-950 text-white">Select Team Member...</option>
                       {profiles.map(member => (
-                        <option key={member.id} value={member.id}>
+                        <option key={member.id} value={member.id} className="bg-zinc-950 text-white">
                           {member.name} - {member.designation || 'Staff'} ({member.role})
                         </option>
                       ))}
                       {profiles.length === 0 && (
-                        <option value="unassigned">No team members registered</option>
+                        <option value="unassigned" className="bg-zinc-950 text-white">No team members registered</option>
                       )}
                     </select>
                   </div>
@@ -551,9 +551,9 @@ export default function AdminDashboardClient({
                       defaultValue=""
                       className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
                     >
-                      <option value="">None (Standalone Task)</option>
+                      <option value="" className="bg-zinc-950 text-white">None (Standalone Task)</option>
                       {tasks.map(t => (
-                        <option key={t.id} value={t.id}>
+                        <option key={t.id} value={t.id} className="bg-zinc-950 text-white">
                           {t.id} - {t.title} ({t.profiles?.name || 'Unassigned'})
                         </option>
                       ))}
@@ -631,12 +631,12 @@ export default function AdminDashboardClient({
                     defaultValue=""
                     className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
                   >
-                    <option value="" disabled>Select Job Role...</option>
-                    <option value="Meta Ads Expert, Photographer, Videographer">Meta Ads Expert, Photographer, Videographer</option>
-                    <option value="Graphic Designer">Graphic Designer</option>
-                    <option value="Team Lead and Video Editor">Team Lead and Video Editor</option>
-                    <option value="Stories Uploading Holder and Conversions">Stories Uploading Holder and Conversions</option>
-                    <option value="Web Developer">Web Developer</option>
+                    <option value="" disabled className="bg-zinc-950 text-white">Select Job Role...</option>
+                    <option value="Meta Ads Expert, Photographer, Videographer" className="bg-zinc-950 text-white">Meta Ads Expert, Photographer, Videographer</option>
+                    <option value="Graphic Designer" className="bg-zinc-950 text-white">Graphic Designer</option>
+                    <option value="Team Lead and Video Editor" className="bg-zinc-950 text-white">Team Lead and Video Editor</option>
+                    <option value="Stories Uploading Holder and Conversions" className="bg-zinc-950 text-white">Stories Uploading Holder and Conversions</option>
+                    <option value="Web Developer" className="bg-zinc-950 text-white">Web Developer</option>
                   </select>
                 </div>
 
@@ -693,8 +693,8 @@ export default function AdminDashboardClient({
                     defaultValue="Member"
                     className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
                   >
-                    <option value="Member">Member (Representative)</option>
-                    <option value="Admin">Admin (Control Center)</option>
+                    <option value="Member" className="bg-zinc-950 text-white">Member (Representative)</option>
+                    <option value="Admin" className="bg-zinc-950 text-white">Admin (Control Center)</option>
                   </select>
                 </div>
 

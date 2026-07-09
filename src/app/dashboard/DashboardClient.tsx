@@ -29,6 +29,8 @@ interface Task {
   profiles?: Profile | null
   is_active?: boolean
   next_task_id?: string | null
+  in_progress_at?: string | null
+  duration_seconds?: number | null
 }
 
 interface DashboardClientProps {
@@ -144,6 +146,17 @@ export default function DashboardClient({
       hour: '2-digit',
       minute: '2-digit',
     })
+  }
+
+  const formatDuration = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined) return null
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    if (mins < 60) return `${mins}m ${secs}s`
+    const hours = Math.floor(mins / 60)
+    const remainingMins = mins % 60
+    return `${hours}h ${remainingMins}m`
   }
 
   return (
@@ -319,9 +332,16 @@ export default function DashboardClient({
                           </span>
                         </div>
                         
-                        <div className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono">
-                          <Calendar className="w-3.5 h-3.5 text-zinc-650" />
-                          <span>Deadline: {formatDate(task.deadline)}</span>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500 font-mono">
+                          <span className="flex items-center gap-1">
+                            <Calendar className="w-3.5 h-3.5 text-zinc-650" />
+                            <span>Deadline: {formatDate(task.deadline)}</span>
+                          </span>
+                          {task.duration_seconds !== null && task.duration_seconds !== undefined && (
+                            <span className="text-emerald-450 font-semibold flex items-center gap-1">
+                              ⏱️ Completed in: {formatDuration(task.duration_seconds)}
+                            </span>
+                          )}
                         </div>
                       </div>
 

@@ -31,6 +31,8 @@ interface Task {
   profiles?: Profile | null
   next_task_id?: string | null
   is_active?: boolean
+  in_progress_at?: string | null
+  duration_seconds?: number | null
 }
 
 interface PerformanceLog {
@@ -99,6 +101,10 @@ export default function AdminDashboardClient({
           deadline,
           status,
           created_at,
+          in_progress_at,
+          duration_seconds,
+          next_task_id,
+          is_active,
           profiles:assigned_to (
             id,
             name,
@@ -335,6 +341,16 @@ export default function AdminDashboardClient({
     stat.designation.toLowerCase().includes(reportSearch.toLowerCase())
   )
 
+  const leaderboard = [...filteredStats].sort((a, b) => {
+    const rateA = a.assigned > 0 ? (a.completed / a.assigned) * 100 : 100
+    const rateB = b.assigned > 0 ? (b.completed / b.assigned) * 100 : 100
+    const rateDiff = rateB - rateA
+    if (rateDiff !== 0) return rateDiff
+    const leavesDiff = a.leaves - b.leaves
+    if (leavesDiff !== 0) return leavesDiff
+    return b.completed - a.completed
+  })
+
   // Format date utility
   const formatDate = (isoString: string) => {
     const d = new Date(isoString)
@@ -344,6 +360,18 @@ export default function AdminDashboardClient({
       hour: '2-digit',
       minute: '2-digit',
     })
+  }
+
+  // Format work duration helper
+  const formatDuration = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined) return null
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    if (mins < 60) return `${mins}m ${secs}s`
+    const hours = Math.floor(mins / 60)
+    const remainingMins = mins % 60
+    return `${hours}h ${remainingMins}m`
   }
 
   return (
@@ -921,6 +949,11 @@ export default function AdminDashboardClient({
                               🔒 Locked (Waiting for Predecessor)
                             </span>
                           )}
+                          {task.duration_seconds !== null && task.duration_seconds !== undefined && (
+                            <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                              ⏱️ Duration: {formatDuration(task.duration_seconds)}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -982,6 +1015,52 @@ export default function AdminDashboardClient({
                     className="w-full pl-9 pr-4 py-2 text-xs glass-input"
                   />
                 </div>
+              </div>
+
+              {/* LEADERBOARD WIDGET */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {leaderboard.slice(0, 3).map((player, index) => {
+                  const rate = player.assigned > 0 ? Math.round((player.completed / player.assigned) * 100) : 100
+                  const trophyColors = [
+                    'from-yellow-950/40 via-yellow-900/10 to-transparent border-yellow-500/30 neon-glow-yellow', // Gold
+                    'from-zinc-800/40 via-zinc-900/10 to-transparent border-zinc-400/30 neon-glow-zinc',      // Silver
+                    'from-amber-950/40 via-amber-900/10 to-transparent border-amber-600/30 neon-glow-amber'   // Bronze
+                  ]
+                  const medalEmoji = index === 0 ? '🏆 GOLD' : index === 1 ? '🥈 SILVER' : '🥉 BRONZE'
+
+                  return (
+                    <div 
+                      key={player.name}
+                      className={`relative overflow-hidden glass-card rounded-xl p-5 border bg-gradient-to-br ${trophyColors[index] || 'from-zinc-900 to-zinc-950 border-white/5'}`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-[10px] tracking-widest uppercase font-mono text-zinc-400">{medalEmoji}</span>
+                          <h3 className="text-base font-bold text-white tracking-wide mt-1">{player.name}</h3>
+                          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{player.designation}</p>
+                        </div>
+                        <span className="text-xs font-bold font-mono tracking-wider text-purple-400 bg-purple-950/40 border border-purple-500/20 px-2 py-0.5 rounded">
+                          RANK #{index + 1}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-white/5 text-center font-mono">
+                        <div>
+                          <div className="text-[8px] text-zinc-500 uppercase">Assigned</div>
+                          <div className="text-xs font-semibold text-white">{player.assigned}</div>
+                        </div>
+                        <div>
+                          <div className="text-[8px] text-zinc-500 uppercase">Completed</div>
+                          <div className="text-xs font-semibold text-emerald-450">{player.completed}</div>
+                        </div>
+                        <div>
+                          <div className="text-[8px] text-zinc-500 uppercase">Rate</div>
+                          <div className="text-xs font-semibold text-cyan-400">{rate}%</div>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
 
               {/* REPORT TABLE */}

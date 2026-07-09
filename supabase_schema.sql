@@ -31,7 +31,9 @@ create table if not exists public.tasks (
   rollover_count integer default 0,
   original_date date,
   next_task_id text references public.tasks(id) on delete set null,
-  is_active boolean default true
+  is_active boolean default true,
+  in_progress_at timestamp with time zone,
+  duration_seconds integer
 );
 
 -- 4. Helper Function to check if the current user is an Admin

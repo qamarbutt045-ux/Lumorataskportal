@@ -116,20 +116,33 @@ export async function POST(request: Request) {
         // Fetch task details before updating
         const { data: taskDetails } = await supabase
           .from('tasks')
-          .select('title, next_task_id, profiles:assigned_to (name, phone)')
+          .select('title, next_task_id, in_progress_at, created_at, profiles:assigned_to (name, phone)')
           .eq('id', fullTaskId)
           .single()
+
+        let durationSeconds = null
+        if (taskDetails) {
+          const startTimeStr = taskDetails.in_progress_at || taskDetails.created_at
+          if (startTimeStr) {
+            const diffMs = Date.now() - new Date(startTimeStr).getTime()
+            durationSeconds = Math.max(0, Math.floor(diffMs / 1000))
+          }
+        }
 
         // Update task status to Done
         const { error: updateError } = await supabase
           .from('tasks')
-          .update({ status: 'Done', completed_at: new Date().toISOString() })
+          .update({ 
+            status: 'Done', 
+            completed_at: new Date().toISOString(),
+            duration_seconds: durationSeconds
+          })
           .eq('id', fullTaskId)
 
         if (updateError) {
           console.error("Supabase Error:", updateError)
         } else {
-          console.log(`Task ${fullTaskId} successfully marked as DONE!`)
+          console.log(`Task ${fullTaskId} successfully marked as DONE in ${durationSeconds || 0}s!`)
           
           // Send confirmation back to employee
           try {

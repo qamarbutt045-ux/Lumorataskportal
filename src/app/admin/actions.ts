@@ -79,20 +79,36 @@ export async function createTask(formData: FormData) {
       .single()
 
     if (assigneeProfile?.phone) {
-      try {
-        const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
-        const message = `*LUMORA COMMAND:*\n\nNew task assigned: "${title}"\n*Task Code: ${data[0].id}*\n📋 *Description:* ${description || 'No description provided'}\n📅 *Deadline:* ${new Date(deadlineStr).toLocaleString()}\n\nReply with *${data[0].id} DONE* to instantly mark this task as complete.`
-        await sendWhatsAppMessage(assigneeProfile.phone, message)
+      const { sendWhatsAppMessage } = await import('@/utils/whatsapp')
+      const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
 
-        // Send monitoring copy to Admin
-        const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
-        if (adminPhone) {
+      console.log('[DEBUG createTask] Starting WhatsApp dispatch process...')
+      console.log('[DEBUG createTask] Employee:', assigneeProfile.name, 'Phone:', assigneeProfile.phone)
+      console.log('[DEBUG createTask] Admin Phone:', adminPhone)
+
+      // A. Send assignment message to employee
+      try {
+        const message = `*LUMORA COMMAND:*\n\nNew task assigned: "${title}"\n*Task Code: ${data[0].id}*\n📋 *Description:* ${description || 'No description provided'}\n📅 *Deadline:* ${new Date(deadlineStr).toLocaleString()}\n\nReply with *${data[0].id} DONE* to mark this task as complete.`
+        await sendWhatsAppMessage(assigneeProfile.phone, message)
+        console.log('[DEBUG createTask] Employee message dispatched successfully.')
+      } catch (err: any) {
+        console.error('[DEBUG createTask] Failed to send to employee:', err.message)
+      }
+
+      // B. Send isolated monitoring copy to Admin
+      if (adminPhone) {
+        try {
           const adminMessage = `*LUMORA MONITORING ALERT:*\n\nTask Assigned to *${assigneeProfile.name}* (${assigneeProfile.phone}):\n\nTask: "${title}"\n*Task Code: ${data[0].id}*\n*Deadline:* ${new Date(deadlineStr).toLocaleString()}`
           await sendWhatsAppMessage(adminPhone, adminMessage)
+          console.log('[DEBUG createTask] Admin monitoring copy dispatched successfully.')
+        } catch (err: any) {
+          console.error('[DEBUG createTask] Failed to send copy to Admin:', err.message)
         }
-      } catch (err) {
-        console.error('[WhatsApp Outgoing] Failed to send assignment notification:', err)
+      } else {
+        console.warn('[DEBUG createTask] Warning: ADMIN_WHATSAPP_NUMBER is missing/falsy in environment variables!')
       }
+    } else {
+      console.warn('[DEBUG createTask] Warning: Selected assignee has no registered phone number!')
     }
   }
 

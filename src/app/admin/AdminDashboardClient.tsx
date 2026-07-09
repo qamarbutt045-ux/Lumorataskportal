@@ -9,6 +9,7 @@ import {
 import { signOut } from '../auth-actions'
 import { createTask, deleteTask, createTeamMember } from './actions'
 import { updateTaskStatus } from '../dashboard/actions'
+import { fetchReportsData, broadcastReportsViaWhatsApp } from './reports-actions'
 import { createClient } from '@/utils/supabase/client'
 
 interface Profile {
@@ -85,6 +86,90 @@ export default function AdminDashboardClient({
   const [reportSearch, setReportSearch] = useState('')
 
   const [isRefreshing, setIsRefreshing] = useState(false)
+
+  // Report Center states
+  const [reportPeriod, setReportPeriod] = useState<'weekly' | 'monthly'>('weekly')
+  const [selectedReportEmpId, setSelectedReportEmpId] = useState<string>('all')
+  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false)
+  const [isBroadcasting, setIsBroadcasting] = useState(false)
+  const [broadcastMessage, setBroadcastMessage] = useState<string | null>(null)
+  const [broadcastError, setBroadcastError] = useState<string | null>(null)
+
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPdf(true)
+    try {
+      const { generateEmployeeReportPDF, generateAdminReportPDF } = await import('@/utils/reports')
+
+      const res = await fetchReportsData(reportPeriod)
+      if ('error' in res && res.error) {
+        alert(res.error)
+        setIsGeneratingPdf(false)
+        return
+      }
+
+      if ('success' in res && res.success && res.employees) {
+        if (selectedReportEmpId === 'all') {
+          const totalTasks = res.employees.reduce((acc, e) => acc + e.totalAssigned, 0)
+          const completedTasks = res.employees.reduce((acc, e) => acc + e.totalCompleted, 0)
+          const leavesCount = res.employees.reduce((acc, e) => acc + e.leavesCount, 0)
+          
+          const doc = generateAdminReportPDF({
+            period: `${reportPeriod === 'weekly' ? 'Weekly' : 'Monthly'} Report (${res.periodName})`,
+            totalTasks,
+            completedTasks,
+            pendingTasks: totalTasks - completedTasks,
+            leavesCount,
+            employees: res.employees.map(e => ({
+              name: e.name,
+              designation: e.designation,
+              assigned: e.totalAssigned,
+              completed: e.totalCompleted,
+              leaves: e.leavesCount,
+              rate: e.completionRate
+            }))
+          })
+          doc.save(`lumora_master_${reportPeriod}_report.pdf`)
+        } else {
+          const emp = res.employees.find(e => e.id === selectedReportEmpId)
+          if (emp) {
+            const doc = generateEmployeeReportPDF({
+              name: emp.name,
+              designation: emp.designation,
+              period: `${reportPeriod === 'weekly' ? 'Weekly' : 'Monthly'} Report (${res.periodName})`,
+              totalAssigned: emp.totalAssigned,
+              totalCompleted: emp.totalCompleted,
+              leavesCount: emp.leavesCount,
+              completionRate: emp.completionRate,
+              tasks: emp.tasks,
+              leaves: emp.leaves
+            })
+            doc.save(`${emp.name.replace(/\s+/g, '_')}_${reportPeriod}_report.pdf`)
+          }
+        }
+      }
+    } catch (e: any) {
+      alert('Failed to generate PDF: ' + e.message)
+    }
+    setIsGeneratingPdf(false)
+  }
+
+  const handleBroadcastWhatsapp = async () => {
+    setIsBroadcasting(true)
+    setBroadcastMessage(null)
+    setBroadcastError(null)
+    
+    try {
+      const res = await broadcastReportsViaWhatsApp(reportPeriod)
+      if ('error' in res && res.error) {
+        setBroadcastError(res.error)
+      } else if ('success' in res && res.success) {
+        setBroadcastMessage(res.message || 'WhatsApp broadcast triggered successfully!')
+      }
+    } catch (e: any) {
+      setBroadcastError(e.message || 'Broadcast failed')
+    }
+    setIsBroadcasting(false)
+  }
 
   // Initialize browser-based Supabase client for polling
   const supabase = createClient()
@@ -1014,6 +1099,107 @@ export default function AdminDashboardClient({
                     onChange={(e) => setReportSearch(e.target.value)}
                     className="w-full pl-9 pr-4 py-2 text-xs glass-input"
                   />
+                </div>
+              </div>
+
+              {/* MANUAL REPORT EXPORT & BROADCAST CONTROL CENTER */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 rounded-xl border border-white/5 bg-zinc-950/20">
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white tracking-wide">Manual Report Export Center</h3>
+                    <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                      Download individual performance statements or master summaries directly to your device as PDF.
+                    </p>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-mono tracking-widest text-zinc-400 uppercase block">Timeframe</label>
+                      <select
+                        value={reportPeriod}
+                        onChange={(e) => setReportPeriod(e.target.value as any)}
+                        className="w-full px-3 py-2 text-xs glass-input bg-zinc-950 text-white"
+                      >
+                        <option value="weekly" className="bg-zinc-950 text-white">Past Week (Weekly)</option>
+                        <option value="monthly" className="bg-zinc-950 text-white">Current Month (Monthly)</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-mono tracking-widest text-zinc-400 uppercase block">Target Report</label>
+                      <select
+                        value={selectedReportEmpId}
+                        onChange={(e) => setSelectedReportEmpId(e.target.value)}
+                        className="w-full px-3 py-2 text-xs glass-input bg-zinc-950 text-white"
+                      >
+                        <option value="all" className="bg-zinc-950 text-white">🏆 Master Summary PDF</option>
+                        {profiles.map(p => (
+                          <option key={p.id} value={p.id} className="bg-zinc-950 text-white">
+                            👤 {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={isGeneratingPdf}
+                    className="w-full py-2.5 rounded-lg border border-white/10 hover:border-zinc-500 text-zinc-350 hover:text-white transition-all text-xs font-mono flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    {isGeneratingPdf ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Generating Document...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-3.5 h-3.5" />
+                        Download PDF Report
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="space-y-4 border-t md:border-t-0 md:border-l border-white/5 pt-4 md:pt-0 md:pl-6 flex flex-col justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-white tracking-wide">WhatsApp Broadcast Dispatch</h3>
+                    <p className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
+                      Manually trigger a full WhatsApp broadcast dispatch. Employee PDFs go directly to their phones, and the master PDF goes to Hussnain.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={handleBroadcastWhatsapp}
+                    disabled={isBroadcasting}
+                    className="w-full py-2.5 rounded-lg bg-gradient-to-r from-purple-650 to-cyan-550 hover:from-purple-600 hover:to-cyan-500 text-white font-mono text-xs flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+                  >
+                    {isBroadcasting ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        Broadcasting...
+                      </>
+                    ) : (
+                      <>
+                        <Smartphone className="w-3.5 h-3.5" />
+                        Broadcast via WhatsApp
+                      </>
+                    )}
+                  </button>
+
+                  {broadcastError && (
+                    <div className="p-2 rounded bg-red-950/40 border border-red-500/20 text-red-400 text-[10px] flex items-center gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{broadcastError}</span>
+                    </div>
+                  )}
+
+                  {broadcastMessage && (
+                    <div className="p-2 rounded bg-emerald-950/40 border border-emerald-500/20 text-emerald-400 text-[10px] flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+                      <span>{broadcastMessage}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 

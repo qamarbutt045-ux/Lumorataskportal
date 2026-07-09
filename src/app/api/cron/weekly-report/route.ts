@@ -17,14 +17,13 @@ export async function GET(request: NextRequest) {
       return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Determine current calendar month range (Pakistan Time)
+    // Determine past 7 days date range (Pakistan Time)
     const today = new Date()
-    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
     
-    const startDateStr = startOfMonth.toISOString().split('T')[0]
+    const startDateStr = sevenDaysAgo.toISOString().split('T')[0]
     const endDateStr = today.toISOString().split('T')[0]
-    
-    const monthName = today.toLocaleString('en-US', { month: 'long', year: 'numeric', timeZone: 'Asia/Karachi' })
+    const periodStr = `${sevenDaysAgo.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${today.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
 
     // 2. Fetch profiles, tasks, and leaves for the period
     const { data: profiles, error: profError } = await supabase
@@ -52,7 +51,7 @@ export async function GET(request: NextRequest) {
     if (leavesError) throw leavesError
 
     if (!profiles || profiles.length === 0) {
-      return Response.json({ success: true, message: 'No employee profiles registered for monthly report.' })
+      return Response.json({ success: true, message: 'No employee profiles registered for weekly report.' })
     }
 
     // 3. Dispatch individual report statements
@@ -88,7 +87,7 @@ export async function GET(request: NextRequest) {
         const doc = generateEmployeeReportPDF({
           name: p.name,
           designation: p.designation || 'Team Representative',
-          period: `Monthly Report (${monthName})`,
+          period: `Weekly Report (${periodStr})`,
           totalAssigned,
           totalCompleted,
           leavesCount,
@@ -105,7 +104,7 @@ export async function GET(request: NextRequest) {
         })
         const pdfBuffer = Buffer.from(doc.output('arraybuffer'))
 
-        const filename = `${p.name.replace(/\s+/g, '_')}_monthly_report_${monthName.replace(/\s+/g, '_')}.pdf`
+        const filename = `${p.name.replace(/\s+/g, '_')}_weekly_report.pdf`
         const mediaId = await uploadMediaToMeta(pdfBuffer, filename)
         if (mediaId) {
           await sendWhatsAppDocument(p.phone, mediaId, filename)
@@ -117,7 +116,7 @@ export async function GET(request: NextRequest) {
     const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
     if (adminPhone && adminSummaryEmployees.length > 0) {
       const adminDoc = generateAdminReportPDF({
-        period: `Monthly Report (${monthName})`,
+        period: `Weekly Report (${periodStr})`,
         totalTasks: totalAssignedAll,
         completedTasks: totalCompletedAll,
         pendingTasks: totalAssignedAll - totalCompletedAll,
@@ -126,7 +125,7 @@ export async function GET(request: NextRequest) {
       })
       const adminPdfBuffer = Buffer.from(adminDoc.output('arraybuffer'))
 
-      const filename = `lumora_monthly_agency_report_${monthName.replace(/\s+/g, '_')}.pdf`
+      const filename = `lumora_weekly_agency_report.pdf`
       const mediaId = await uploadMediaToMeta(adminPdfBuffer, filename)
       if (mediaId) {
         await sendWhatsAppDocument(adminPhone, mediaId, filename)
@@ -135,11 +134,11 @@ export async function GET(request: NextRequest) {
 
     return Response.json({
       success: true,
-      message: `Monthly report statements compiled and dispatched successfully.`
+      message: `Weekly report statements compiled and dispatched successfully.`
     })
 
   } catch (err: any) {
-    console.error('[Monthly Cron Error]:', err)
+    console.error('[Weekly Cron Error]:', err)
     return Response.json({ success: false, error: err.message }, { status: 500 })
   }
 }

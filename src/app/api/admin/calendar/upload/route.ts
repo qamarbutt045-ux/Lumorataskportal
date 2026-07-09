@@ -54,33 +54,33 @@ export async function POST(request: NextRequest) {
       .from('profiles')
       .select('id, name')
 
-    const profileMap: Record<string, string> = {}
-    if (allProfiles) {
-      allProfiles.forEach(p => {
-        profileMap[p.name.toLowerCase().trim()] = p.id
-      })
-    }
-
     const tasksToInsert: any[] = []
     let skippedCount = 0
 
     for (const row of rows) {
-      // Expected columns: Date, Assignee, Title, Description, Next Assignee
-      const dateVal = row.Date || row.date
-      const assigneeVal = row.Assignee || row.assignee
-      const titleVal = row.Title || row.title
-      const descVal = row.Description || row.description || row.desc || null
+      // Flexible Column Mappings to support both our template and the user's specific spreadsheet layout
+      const dateVal = row.Date || row.date || row['Due Date'] || row['due_date'] || row['Start Date'] || row['start_date']
+      const assigneeVal = row.Assignee || row.assignee || row['Assignee Name'] || row['assignee_name']
+      const titleVal = row.Title || row.title || row['Task Name'] || row['task_name']
+      const descVal = row.Description || row.description || row.desc || row.Checklist || row.checklist || null
+      const timeVal = row['Time Block'] || row['time_block'] || row['Due Time'] || row['due_time']
 
       if (!titleVal) {
         skippedCount++
         continue
       }
 
-      // Resolve representative profile ID
+      // Resolve representative profile ID using robust fuzzy/includes matching
       let assignedToUuid = null
-      if (assigneeVal) {
+      if (assigneeVal && allProfiles) {
         const cleanName = assigneeVal.toString().toLowerCase().trim()
-        assignedToUuid = profileMap[cleanName] || null
+        const matchedProfile = allProfiles.find(p => {
+          const profileName = p.name.toLowerCase().trim()
+          return profileName.includes(cleanName) || cleanName.includes(profileName)
+        })
+        if (matchedProfile) {
+          assignedToUuid = matchedProfile.id
+        }
       }
 
       // Parse date accurately
@@ -98,10 +98,17 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Create deadline at 8 PM on the scheduled date
+      // Resolve deadline time
       let deadlineStr = null
       if (scheduledDate) {
-        deadlineStr = new Date(`${scheduledDate}T20:00:00`).toISOString()
+        if (timeVal) {
+          const cleanTime = timeVal.toString().trim()
+          // Check if timeVal has colon, else format it
+          const timeFormatted = cleanTime.includes(':') ? cleanTime : `${cleanTime}:00`
+          deadlineStr = new Date(`${scheduledDate}T${timeFormatted}`).toISOString()
+        } else {
+          deadlineStr = new Date(`${scheduledDate}T20:00:00`).toISOString()
+        }
       }
 
       tasksToInsert.push({
@@ -112,7 +119,7 @@ export async function POST(request: NextRequest) {
         deadline: deadlineStr,
         original_date: scheduledDate,
         status: 'Pending',
-        is_active: true // Will be locked later if predecessor is set
+        is_active: true // Will be locked later if dependency predecessor is mapped
       })
     }
 
@@ -120,7 +127,7 @@ export async function POST(request: NextRequest) {
       return Response.json({ success: false, error: 'No valid tasks found in the uploaded file' }, { status: 400 })
     }
 
-    // Insert tasks in batch and select returned rows to construct sequence IDs
+    // Insert tasks in batch and select returned rows to resolve dependency chains
     const { data: insertedTasks, error: insertError } = await adminClient
       .from('tasks')
       .insert(tasksToInsert)
@@ -128,39 +135,40 @@ export async function POST(request: NextRequest) {
 
     if (insertError) throw insertError
 
-    // 6. Build and link successor pipeline dependencies (Next Assignee match)
+    // 6. Build and link predecessor pipeline dependencies (Predecessor Code match)
     if (insertedTasks && insertedTasks.length > 0) {
+      // Build a map of Task ID from the sheet -> inserted database task ID
+      const taskIdMap: Record<string, string> = {}
+      insertedTasks.forEach((t, idx) => {
+        const row = rows[idx]
+        const rowId = row['Task ID'] || row['task_id'] || row['ID'] || row['id']
+        if (rowId) {
+          taskIdMap[rowId.toString().trim()] = t.id
+        }
+      })
+
       const updates = []
       
       for (let i = 0; i < insertedTasks.length; i++) {
         const row = rows[i]
-        const nextAssigneeVal = row['Next Assignee'] || row['next_assignee']
+        const depCode = row['Dependency'] || row['dependency'] || row['Predecessor']
         
-        if (nextAssigneeVal) {
-          const cleanNextName = nextAssigneeVal.toString().toLowerCase().trim()
-          const nextAssigneeUuid = profileMap[cleanNextName]
+        if (depCode) {
+          const cleanDepCode = depCode.toString().trim()
+          const predecessorDbId = taskIdMap[cleanDepCode]
           
-          if (nextAssigneeUuid) {
-            // Find a task in the inserted batch belonging to the successor on the same date
-            const successorTask = insertedTasks.find((t, idx) => 
-              t.assigned_to === nextAssigneeUuid && 
-              t.scheduled_date === insertedTasks[i].scheduled_date &&
-              idx !== i
+          if (predecessorDbId) {
+            // Update predecessor next_task_id to B, and lock successor task B (is_active = false)
+            updates.push(
+              adminClient
+                .from('tasks')
+                .update({ next_task_id: insertedTasks[i].id })
+                .eq('id', predecessorDbId),
+              adminClient
+                .from('tasks')
+                .update({ is_active: false })
+                .eq('id', insertedTasks[i].id)
             )
-
-            if (successorTask) {
-              // Update Task A next_task_id to B, and set Task B as locked (is_active = false)
-              updates.push(
-                adminClient
-                  .from('tasks')
-                  .update({ next_task_id: successorTask.id })
-                  .eq('id', insertedTasks[i].id),
-                adminClient
-                  .from('tasks')
-                  .update({ is_active: false })
-                  .eq('id', successorTask.id)
-              )
-            }
           }
         }
       }

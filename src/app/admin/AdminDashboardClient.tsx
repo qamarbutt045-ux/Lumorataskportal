@@ -632,11 +632,11 @@ export default function AdminDashboardClient({
                     className="w-full px-3.5 py-2.5 glass-input text-sm appearance-none bg-zinc-950 text-white"
                   >
                     <option value="" disabled>Select Job Role...</option>
-                    <option value="Videographer & Meta Ads Expert">Videographer & Meta Ads Expert</option>
+                    <option value="Meta Ads Expert, Photographer, Videographer">Meta Ads Expert, Photographer, Videographer</option>
                     <option value="Graphic Designer">Graphic Designer</option>
-                    <option value="Video Editor">Video Editor</option>
+                    <option value="Team Lead and Video Editor">Team Lead and Video Editor</option>
+                    <option value="Stories Uploading Holder and Conversions">Stories Uploading Holder and Conversions</option>
                     <option value="Web Developer">Web Developer</option>
-                    <option value="Staff Representative">Staff Representative</option>
                   </select>
                 </div>
 

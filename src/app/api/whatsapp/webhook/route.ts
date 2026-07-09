@@ -1,7 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-// Initialize using Service Role to bypass RLS policies for server-side updates and command reads
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const supabase = createClient(supabaseUrl, supabaseKey)
 
@@ -35,20 +34,89 @@ export async function POST(request: Request) {
 
       // Clean sender phone for profile lookup
       const cleanPhone = fromNumber.replace(/\D/g, '')
+      const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
+
+      // COMMAND A: ADMIN REMOTE APPROVAL (e.g. #1029 APPROVE or #1029 REJECT feedback)
+      const approvalMatch = textBody.match(/#(\d+)\s+(APPROVE|REJECT)(?:\s+(.*))?/i)
+      const isAdminSender = cleanPhone === adminPhone?.replace(/\D/g, '')
+
+      if (approvalMatch && isAdminSender) {
+        const taskCode = approvalMatch[1]
+        const fullTaskId = '#' + taskCode
+        const action = approvalMatch[2].toUpperCase()
+        const feedback = approvalMatch[3] || 'No feedback provided'
+
+        console.log(`[Admin Control] Received approval command ${action} for task ${fullTaskId} from Admin.`)
+
+        if (action === 'APPROVE') {
+          // Unlock and activate the successor task (UPLOAD)
+          const { data: unlockedTask, error: unlockError } = await supabase
+            .from('tasks')
+            .update({ is_active: true, status: 'In Progress' })
+            .eq('id', fullTaskId)
+            .select('id, title, description, assigned_to, profiles:assigned_to (name, phone)')
+            .maybeSingle()
+
+          if (unlockError) throw unlockError
+
+          if (unlockedTask) {
+            const assignee = unlockedTask.profiles as any
+            if (assignee?.phone) {
+              const pipelineAlert = `*LUMORA PIPELINE TRIGGER:*\n\nSalam ${assignee.name},\n\nThe Admin has *APPROVED* the previous step! Your task is now *ACTIVE*:\n\n🆔 *Task Code:* ${unlockedTask.id}\n📝 *Title:* ${unlockedTask.title}\n📋 *Description:* ${unlockedTask.description || 'No description'}\n\n*Reply with ${unlockedTask.id} DONE once uploaded.*`
+              try {
+                await sendWhatsAppMessage(assignee.phone, pipelineAlert)
+              } catch (e) {
+                console.error('[Admin Approve] Failed to notify assignee:', e)
+              }
+            }
+            await sendWhatsAppMessage(fromNumber, `*LUMORA CONTROL:*\n\nTask *${fullTaskId}* successfully *APPROVED* and unlocked for ${assignee?.name || 'assignee'}.`)
+          } else {
+            await sendWhatsAppMessage(fromNumber, `*LUMORA CONTROL:*\n\nError: Task *${fullTaskId}* was not found.`)
+          }
+        } else if (action === 'REJECT') {
+          // Re-lock the task and find predecessor (DESIGN) to request revisions
+          const { data: predecessorTask, error: predError } = await supabase
+            .from('tasks')
+            .update({ status: 'In Progress' }) // Reset back to active so they must redo it
+            .eq('next_task_id', fullTaskId)
+            .select('id, title, assigned_to, profiles:assigned_to (name, phone)')
+            .maybeSingle()
+
+          if (predError) throw predError
+
+          if (predecessorTask) {
+            const designer = predecessorTask.profiles as any
+            if (designer?.phone) {
+              const rejectMsg = `*LUMORA REVISION REQUEST:*\n\nSalam ${designer.name},\n\nThe Admin has requested revisions on your design task *${predecessorTask.title}* (${predecessorTask.id}).\n\n💬 *Feedback:* ${feedback}\n\nPlease update the design and reply *${predecessorTask.id} DONE* once revised.`
+              try {
+                await sendWhatsAppMessage(designer.phone, rejectMsg)
+              } catch (e) {
+                console.error('[Admin Reject] Failed to notify designer:', e)
+              }
+            }
+            await sendWhatsAppMessage(fromNumber, `*LUMORA CONTROL:*\n\nTask *${fullTaskId}* *REJECTED*. Revision request sent to ${designer?.name || 'assignee'} with feedback: "${feedback}".`)
+          } else {
+            await sendWhatsAppMessage(fromNumber, `*LUMORA CONTROL:*\n\nError: Predecessor task for *${fullTaskId}* was not found.`)
+          }
+        }
+
+        return Response.json({ status: 'success', action: `admin_${action}` })
+      }
+
       const { data: senderProfile } = await supabase
         .from('profiles')
         .select('id, name, designation')
         .ilike('phone', `%${cleanPhone.slice(-9)}%`)
         .single()
 
-      // COMMAND 1: MENU / HELP
+      // COMMAND B: MENU / HELP
       if (textBody === 'MENU' || textBody === 'HELP') {
         const menuMsg = `*LUMORA INTERACTIVE MENU:*\n\nSend these commands to monitor your work:\n\n📋 *TASKS* - View your active tasks for today.\n📊 *STATS* - View your monthly performance report.\n\n*To mark a task complete:* #[Code] DONE`
         await sendWhatsAppMessage(fromNumber, menuMsg)
         return Response.json({ status: 'success', action: 'menu' })
       }
 
-      // COMMAND 2: TASKS list
+      // COMMAND C: TASKS list
       if (textBody === 'TASKS') {
         if (!senderProfile) {
           await sendWhatsAppMessage(fromNumber, `*LUMORA ERROR:*\n\nYour phone number (${fromNumber}) is not registered in our database. Please contact the Admin.`)
@@ -73,14 +141,13 @@ export async function POST(request: Request) {
         return Response.json({ status: 'success', action: 'tasks' })
       }
 
-      // COMMAND 3: PERFORMANCE STATS
+      // COMMAND D: PERFORMANCE STATS
       if (textBody === 'STATS') {
         if (!senderProfile) {
           await sendWhatsAppMessage(fromNumber, `*LUMORA ERROR:*\n\nYour profile was not found. Please contact the Admin.`)
           return Response.json({ status: 'unregistered' })
         }
 
-        // Fetch monthly performance stats
         const { data: logs } = await supabase
           .from('performance_logs')
           .select('assigned_count, completed_count, is_leave')
@@ -142,7 +209,7 @@ export async function POST(request: Request) {
         if (updateError) {
           console.error("Supabase Error:", updateError)
         } else {
-          console.log(`Task ${fullTaskId} successfully marked as DONE in ${durationSeconds || 0}s!`)
+          console.log(`Task ${fullTaskId} marked as DONE in ${durationSeconds || 0}s!`)
           
           // Send confirmation back to employee
           try {
@@ -153,7 +220,6 @@ export async function POST(request: Request) {
           }
 
           // Send monitoring completion notification to Admin
-          const adminPhone = process.env.ADMIN_WHATSAPP_NUMBER
           const assigneeName = (taskDetails?.profiles as any)?.name || 'Team Member'
           const assigneePhone = (taskDetails?.profiles as any)?.phone || fromNumber
 
@@ -168,37 +234,49 @@ export async function POST(request: Request) {
 
           // AUTO-HANDOVER CHAIN TRIGGER
           if (taskDetails?.next_task_id) {
-            console.log(`[Handover Chain] Unlocking downstream successor task: ${taskDetails.next_task_id}`)
+            console.log(`[Handover Chain] Querying next task: ${taskDetails.next_task_id}`)
 
-            // Unlock and activate successor task in database
+            // Fetch details of successor task
             const { data: nextTask, error: nextTaskError } = await supabase
               .from('tasks')
-              .update({ is_active: true, status: 'In Progress' })
+              .select('id, title, description, requires_approval, assigned_to, profiles:assigned_to (name, phone)')
               .eq('id', taskDetails.next_task_id)
-              .select('id, title, description, assigned_to, profiles:assigned_to (name, phone)')
               .single()
 
             if (nextTaskError) {
-              console.error('[Handover Chain] Failed to activate successor task:', nextTaskError)
+              console.error('[Handover Chain] Failed to fetch successor task details:', nextTaskError)
             } else if (nextTask) {
               const nextAssignee = nextTask.profiles as any
-              if (nextAssignee?.phone) {
-                // Send activation WhatsApp notification to successor assignee
-                const pipelineAlert = `*LUMORA PIPELINE TRIGGER:*\n\nSalam ${nextAssignee.name},\n\nPredecessor task completed! Your linked pipeline task is now *ACTIVE*:\n\n🆔 *Task Code:* ${nextTask.id}\n📝 *Title:* ${nextTask.title}\n📋 *Description:* ${nextTask.description || 'No description'}\n\n*Reply with ${nextTask.id} DONE once completed.*`
-                
-                try {
-                  await sendWhatsAppMessage(nextAssignee.phone, pipelineAlert)
-                  console.log(`[Handover Chain] Successfully notified next assignee: ${nextAssignee.name}`)
-                } catch (err) {
-                  console.error('[Handover Chain] Failed to dispatch WhatsApp trigger:', err)
-                }
 
-                // Notify Admin of Pipeline Transition
+              if (nextTask.requires_approval) {
+                // Halts activation, keeps it locked, and dispatches approval request card to Admin (Hussnain)
                 if (adminPhone) {
-                  const adminPipelineMsg = `*LUMORA MONITORING ALERT:*\n\nPipeline transition: Employee *${assigneeName}* completed predecessor task *${fullTaskId}*. Sequential task *${nextTask.id}* has been unlocked and activated for *${nextAssignee.name}*.`
+                  const approvalRequestMsg = `*LUMORA APPROVAL REQUEST:*\n\nEmployee *${assigneeName}* has completed the predecessor task for *${taskDetails.title}*.\n\n🆔 *Upload Task Code:* ${nextTask.id}\n📝 *Title:* ${nextTask.title}\n\nReply with *${nextTask.id} APPROVE* to unlock and dispatch, or *${nextTask.id} REJECT [Feedback]* to request revisions.`
                   try {
-                    await sendWhatsAppMessage(adminPhone, adminPipelineMsg)
-                  } catch (e) {}
+                    await sendWhatsAppMessage(adminPhone, approvalRequestMsg)
+                    console.log(`[Handover Chain] Approval request card successfully sent to Admin. Task ${nextTask.id} remains locked.`)
+                  } catch (err) {
+                    console.error('[Handover Chain] Failed to send approval request card to Admin:', err)
+                  }
+                }
+              } else {
+                // Standard flow: auto-activate successor task immediately
+                const { error: activateError } = await supabase
+                  .from('tasks')
+                  .update({ is_active: true, status: 'In Progress' })
+                  .eq('id', nextTask.id)
+
+                if (activateError) {
+                  console.error('[Handover Chain] Failed to activate successor task:', activateError)
+                } else if (nextAssignee?.phone) {
+                  const pipelineAlert = `*LUMORA PIPELINE TRIGGER:*\n\nSalam ${nextAssignee.name},\n\nPredecessor task completed! Your linked pipeline task is now *ACTIVE*:\n\n🆔 *Task Code:* ${nextTask.id}\n📝 *Title:* ${nextTask.title}\n📋 *Description:* ${nextTask.description || 'No description'}\n\n*Reply with ${nextTask.id} DONE once completed.*`
+                  
+                  try {
+                    await sendWhatsAppMessage(nextAssignee.phone, pipelineAlert)
+                    console.log(`[Handover Chain] Successfully notified next assignee: ${nextAssignee.name}`)
+                  } catch (err) {
+                    console.error('[Handover Chain] Failed to dispatch WhatsApp trigger:', err)
+                  }
                 }
               }
             }

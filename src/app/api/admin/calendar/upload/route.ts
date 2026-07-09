@@ -54,11 +54,21 @@ export async function POST(request: NextRequest) {
       .from('profiles')
       .select('id, name')
 
+    // Create a local map of all original Excel rows to resolve skipped approvals recursively
+    const originalRowsMap: Record<string, any> = {}
+    rows.forEach(row => {
+      const rowId = row['Task ID'] || row['task_id'] || row['ID'] || row['id']
+      if (rowId) {
+        originalRowsMap[rowId.toString().trim()] = row
+      }
+    })
+
     const tasksToInsert: any[] = []
+    const resolvedDeps: (string | null)[] = [] // Tracks dependency mapping per index
     let skippedCount = 0
 
     for (const row of rows) {
-      // Flexible Column Mappings to support both our template and the user's specific spreadsheet layout
+      const rowId = row['Task ID'] || row['task_id'] || row['ID'] || row['id'] || ''
       const dateVal = row.Date || row.date || row['Due Date'] || row['due_date'] || row['Start Date'] || row['start_date']
       const assigneeVal = row.Assignee || row.assignee || row['Assignee Name'] || row['assignee_name']
       const titleVal = row.Title || row.title || row['Task Name'] || row['task_name']
@@ -66,6 +76,16 @@ export async function POST(request: NextRequest) {
       const timeVal = row['Time Block'] || row['time_block'] || row['Due Time'] || row['due_time']
 
       if (!titleVal) {
+        skippedCount++
+        continue
+      }
+
+      // Check if this is an approval task -> SKIP IT entirely!
+      const isApprovalTask = 
+        rowId.toString().toUpperCase().includes('APPROVAL') || 
+        titleVal.toString().toUpperCase().includes('APPROVE')
+
+      if (isApprovalTask) {
         skippedCount++
         continue
       }
@@ -103,13 +123,41 @@ export async function POST(request: NextRequest) {
       if (scheduledDate) {
         if (timeVal) {
           const cleanTime = timeVal.toString().trim()
-          // Check if timeVal has colon, else format it
           const timeFormatted = cleanTime.includes(':') ? cleanTime : `${cleanTime}:00`
           deadlineStr = new Date(`${scheduledDate}T${timeFormatted}`).toISOString()
         } else {
           deadlineStr = new Date(`${scheduledDate}T20:00:00`).toISOString()
         }
       }
+
+      // Resolve dependency chain recursively through any skipped approval tasks
+      const depCodeVal = row['Dependency'] || row['dependency'] || row['Predecessor']
+      let resolvedDep = depCodeVal ? depCodeVal.toString().trim() : null
+      let requiresApproval = false
+
+      if (resolvedDep) {
+        while (originalRowsMap[resolvedDep]) {
+          const depRow = originalRowsMap[resolvedDep]
+          const depTitle = depRow.Title || depRow.title || ''
+          const depId = depRow['Task ID'] || depRow['task_id'] || depRow['ID'] || depRow['id'] || ''
+          
+          const isApproval = depId.toString().toUpperCase().includes('APPROVAL') || depTitle.toString().toUpperCase().includes('APPROVE')
+          if (isApproval) {
+            requiresApproval = true
+            const nextDep = depRow.Dependency || depRow.dependency || depRow.Predecessor
+            if (nextDep) {
+              resolvedDep = nextDep.toString().trim()
+            } else {
+              resolvedDep = null
+              break
+            }
+          } else {
+            break
+          }
+        }
+      }
+
+      resolvedDeps.push(resolvedDep)
 
       tasksToInsert.push({
         title: titleVal,
@@ -119,7 +167,8 @@ export async function POST(request: NextRequest) {
         deadline: deadlineStr,
         original_date: scheduledDate,
         status: 'Pending',
-        is_active: true // Will be locked later if dependency predecessor is mapped
+        is_active: true, // Will be locked later if dependency is resolved
+        requires_approval: requiresApproval
       })
     }
 
@@ -150,12 +199,10 @@ export async function POST(request: NextRequest) {
       const updates = []
       
       for (let i = 0; i < insertedTasks.length; i++) {
-        const row = rows[i]
-        const depCode = row['Dependency'] || row['dependency'] || row['Predecessor']
+        const resolvedDepCode = resolvedDeps[i]
         
-        if (depCode) {
-          const cleanDepCode = depCode.toString().trim()
-          const predecessorDbId = taskIdMap[cleanDepCode]
+        if (resolvedDepCode) {
+          const predecessorDbId = taskIdMap[resolvedDepCode]
           
           if (predecessorDbId) {
             // Update predecessor next_task_id to B, and lock successor task B (is_active = false)

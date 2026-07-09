@@ -33,7 +33,8 @@ create table if not exists public.tasks (
   next_task_id text references public.tasks(id) on delete set null,
   is_active boolean default true,
   in_progress_at timestamp with time zone,
-  duration_seconds integer
+  duration_seconds integer,
+  requires_approval boolean default false
 );
 
 -- 4. Helper Function to check if the current user is an Admin

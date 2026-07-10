@@ -33,7 +33,7 @@ const token = env.WHATSAPP_TOKEN || env.WHATSAPP_ACCESS_TOKEN;
 const phoneId = env.WHATSAPP_PHONE_NUMBER_ID;
 
 // CHANGE THIS to your phone number (+923701645009) to test delivery
-const testPhone = '923701645009'; 
+const testPhone = '923445552403'; 
 
 if (!token || !phoneId) {
   console.error('Error: WHATSAPP_TOKEN or WHATSAPP_PHONE_NUMBER_ID is missing in .env.local.');

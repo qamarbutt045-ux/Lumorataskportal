@@ -205,16 +205,12 @@ export async function POST(request: NextRequest) {
           const predecessorDbId = taskIdMap[resolvedDepCode]
           
           if (predecessorDbId) {
-            // Update predecessor next_task_id to B, and lock successor task B (is_active = false)
+            // Update predecessor next_task_id to B
             updates.push(
               adminClient
                 .from('tasks')
                 .update({ next_task_id: insertedTasks[i].id })
-                .eq('id', predecessorDbId),
-              adminClient
-                .from('tasks')
-                .update({ is_active: false })
-                .eq('id', insertedTasks[i].id)
+                .eq('id', predecessorDbId)
             )
           }
         }

@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
         )
       `)
       .eq('scheduled_date', todayDateStr)
+      .eq('is_active', true)
       .in('status', ['Pending', 'In Progress'])
 
     if (fetchError) throw fetchError

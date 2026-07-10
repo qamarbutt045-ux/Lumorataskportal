@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/dispatch",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/rollover",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-report",
+      "schedule": "0 17 * * 5"
+    },
+    {
+      "path": "/api/cron/monthly-report",
+      "schedule": "0 18 * * *"
+    }
+  ]
+}
